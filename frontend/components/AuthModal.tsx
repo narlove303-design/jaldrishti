@@ -21,14 +21,15 @@ interface AuthModalProps {
 
 export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
   const { login } = useAuth();
-  const [mode, setMode] = useState<'login' | 'register' | 'otp' | 'forgot'>('login');
+  const [mode, setMode] = useState<'login' | 'register' | 'otp' | 'forgot' | 'reset'>('login');
 
   // Form inputs
   const [contact, setContact] = useState('');
   const [password, setPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
   const [name, setName] = useState('');
   const [village, setVillage] = useState('Village A');
-  const [otp, setOtp] = useState('123456');
+  const [otp, setOtp] = useState('');
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -61,8 +62,8 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
         method: 'POST',
         body: JSON.stringify({ name, email_or_mobile: contact, password, village }),
       });
-      setOtp(res.simulatedOtp || '123456');
-      setInfo('Simulated OTP dispatched. In demonstration mode, use code 123456.');
+      setOtp(res.simulatedOtp || '');
+      setInfo(`Simulated gateway code generated: ${res.simulatedOtp}. Please enter code below to verify.`);
       setMode('otp');
     } catch (err: any) {
       setError(err.message || 'Registration failed.');
@@ -96,13 +97,35 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
     setError(null);
 
     try {
-      await apiRequest('/auth/forgot-password', {
+      const res = await apiRequest<{ simulatedOtp: string }>('/auth/forgot-password', {
         method: 'POST',
         body: JSON.stringify({ email_or_mobile: contact }),
       });
-      setInfo('Demo password reset instructions issued. Default password is Demo12345!');
+      setOtp(res.simulatedOtp || '');
+      setInfo(`Password recovery code generated: ${res.simulatedOtp}. Please enter the code and set your new password.`);
+      setMode('reset');
     } catch (err: any) {
       setError(err.message || 'Request failed.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleResetPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    setError(null);
+
+    try {
+      const res = await apiRequest<{ message: string }>('/auth/reset-password', {
+        method: 'POST',
+        body: JSON.stringify({ email_or_mobile: contact, otp, new_password: newPassword }),
+      });
+      setInfo(res.message || 'Password reset successfully. Please sign in with your new password.');
+      setPassword(newPassword);
+      setMode('login');
+    } catch (err: any) {
+      setError(err.message || 'Failed to reset password.');
     } finally {
       setLoading(false);
     }
@@ -132,8 +155,9 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
           <h2 className="text-xl font-extrabold text-navy-900 dark:text-white">
             {mode === 'login' ? 'Sign in to JalDrishti' :
              mode === 'register' ? 'Register Village Resident Account' :
-             mode === 'otp' ? 'Verify Simulated OTP' :
-             'Recover Password'}
+             mode === 'otp' ? 'Verify Secure OTP' :
+             mode === 'forgot' ? 'Recover Password' :
+             'Reset Account Password'}
           </h2>
           <p className="text-xs text-slate-500">
             Smart Multi-Village Water Intelligence System
@@ -326,7 +350,7 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
               disabled={loading}
               className="w-full py-2.5 rounded-xl bg-teal-600 hover:bg-teal-500 text-white font-bold text-xs shadow transition mt-2"
             >
-              {loading ? 'Sending OTP...' : 'Send Simulated OTP'}
+              {loading ? 'Sending OTP...' : 'Send Secure OTP'}
             </button>
           </form>
         )}
@@ -335,7 +359,7 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
         {mode === 'otp' && (
           <form onSubmit={handleOtpVerify} className="space-y-3.5 text-xs">
             <div className="p-3 bg-teal-50 dark:bg-teal-950/40 rounded-xl text-teal-800 dark:text-teal-200">
-              Simulated OTP Verification: Enter <strong>123456</strong> to activate your resident account.
+              Enter the 6-digit verification code dispatched to activate your resident account.
             </div>
 
             <div>
@@ -345,6 +369,7 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
               <input
                 type="text"
                 required
+                maxLength={6}
                 value={otp}
                 onChange={(e) => setOtp(e.target.value)}
                 className="w-full p-2.5 rounded-xl border border-slate-300 dark:border-navy-700 bg-white dark:bg-navy-800 text-slate-900 dark:text-white font-mono text-center text-lg tracking-widest"
@@ -371,7 +396,7 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
           </form>
         )}
 
-        {/* Forgot Password */}
+        {/* Forgot Password Request */}
         {mode === 'forgot' && (
           <form onSubmit={handleForgotPassword} className="space-y-3.5 text-xs">
             <div>
@@ -404,6 +429,58 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
               className="w-full py-2.5 rounded-xl bg-teal-600 hover:bg-teal-500 text-white font-bold text-xs shadow transition mt-2"
             >
               {loading ? 'Processing...' : 'Send Recovery OTP'}
+            </button>
+          </form>
+        )}
+
+        {/* Reset Password Form */}
+        {mode === 'reset' && (
+          <form onSubmit={handleResetPassword} className="space-y-3.5 text-xs">
+            <div>
+              <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                Recovery OTP Code
+              </label>
+              <input
+                type="text"
+                required
+                maxLength={6}
+                value={otp}
+                onChange={(e) => setOtp(e.target.value)}
+                placeholder="6-digit code"
+                className="w-full p-2.5 rounded-xl border border-slate-300 dark:border-navy-700 bg-white dark:bg-navy-800 text-slate-900 dark:text-white font-mono text-center text-lg tracking-widest"
+              />
+            </div>
+
+            <div>
+              <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                New Password (minimum 8 characters)
+              </label>
+              <input
+                type="password"
+                required
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                placeholder="Enter strong new password"
+                className="w-full p-2.5 rounded-xl border border-slate-300 dark:border-navy-700 bg-white dark:bg-navy-800 text-slate-900 dark:text-white"
+              />
+            </div>
+
+            <div className="flex justify-between items-center text-[11px] pt-1">
+              <button
+                type="button"
+                onClick={() => setMode('login')}
+                className="text-teal-600 dark:text-teal-400 font-semibold hover:underline"
+              >
+                Cancel and return to Sign in
+              </button>
+            </div>
+
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full py-2.5 rounded-xl bg-teal-600 hover:bg-teal-500 text-white font-bold text-xs shadow transition mt-2"
+            >
+              {loading ? 'Updating Password...' : 'Reset Password'}
             </button>
           </form>
         )}

@@ -149,9 +149,18 @@ export default function DashboardPage() {
     const connectWebSocket = () => {
       try {
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        // Connect to port 4000 where our backend server is listening
-        const wsUrl = `${protocol}//${window.location.hostname}:4000/ws/telemetry`;
+        const storedToken = localStorage.getItem('jaldrishti_token');
+        const tokenQuery = storedToken ? `?token=${encodeURIComponent(storedToken)}` : '';
+        // Connect to port 4000 where our backend server is listening with JWT authentication
+        const wsUrl = `${protocol}//${window.location.hostname}:4000/ws/telemetry${tokenQuery}`;
         socket = new WebSocket(wsUrl);
+
+        socket.onopen = () => {
+          const activeToken = localStorage.getItem('jaldrishti_token');
+          if (activeToken && socket && socket.readyState === WebSocket.OPEN) {
+            socket.send(JSON.stringify({ type: 'AUTH', token: activeToken }));
+          }
+        };
 
         socket.onmessage = (event) => {
           try {

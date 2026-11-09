@@ -122,6 +122,8 @@ export function initDatabase() {
       timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
     );
 
+    CREATE INDEX IF NOT EXISTS idx_telemetry_metric_ts ON telemetry_history (metric, timestamp);
+
     CREATE TABLE IF NOT EXISTS leakage_alerts (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       leak_code TEXT UNIQUE NOT NULL,
@@ -234,6 +236,66 @@ export function initDatabase() {
   `);
 
   seedData();
+  seedTelemetryHistoryIfEmpty();
+}
+
+export function seedTelemetryHistoryIfEmpty() {
+  const count = db.prepare('SELECT COUNT(*) as count FROM telemetry_history').get()?.count || 0;
+  if (count > 0) return;
+
+  console.log('Seeding 30 days of realistic SCADA telemetry history for analytics...');
+  
+  const insertStmt = db.prepare(`
+    INSERT INTO telemetry_history (sensor_tag, metric, value, unit, timestamp)
+    VALUES (?, ?, ?, ?, ?)
+  `);
+
+  db.exec('BEGIN TRANSACTION;');
+  try {
+    const now = new Date();
+    // 30 days back = 30 * 24 = 720 hours
+    for (let hoursBack = 720; hoursBack >= 0; hoursBack--) {
+      const dt = new Date(now.getTime() - hoursBack * 60 * 60 * 1000);
+      const isoTimestamp = dt.toISOString().slice(0, 19).replace('T', ' ');
+      const hour = dt.getHours();
+
+      // Diurnal municipal demand curve
+      let demandFactor = 0.95;
+      if (hour >= 6 && hour <= 9) demandFactor = 1.35; // morning peak
+      else if (hour >= 17 && hour <= 21) demandFactor = 1.30; // evening peak
+      else if (hour >= 0 && hour <= 4) demandFactor = 0.40; // minimum night flow
+
+      // Day-of-week minor variance
+      const dayFactor = dt.getDay() === 0 || dt.getDay() === 6 ? 1.08 : 1.0;
+      const combinedFactor = demandFactor * dayFactor;
+
+      const suppliedKl = Number((12.2 * combinedFactor + (Math.random() - 0.5) * 0.6).toFixed(2));
+      const deliveredAKl = Number((4.68 * combinedFactor + (Math.random() - 0.5) * 0.3).toFixed(2));
+      const deliveredBKl = Number((3.67 * combinedFactor + (Math.random() - 0.5) * 0.2).toFixed(2));
+      const deliveredCKl = Number((3.16 * combinedFactor + (Math.random() - 0.5) * 0.2).toFixed(2));
+      const totalDelivered = deliveredAKl + deliveredBKl + deliveredCKl;
+      const authorizedKl = Number((totalDelivered * 0.903).toFixed(2));
+      const diffPercent = Number((((suppliedKl - authorizedKl) / suppliedKl) * 100).toFixed(1));
+      const energyKwh = Number((4.14 * combinedFactor + (Math.random() - 0.5) * 0.2).toFixed(2));
+      const pressureBar = Number((3.62 - (combinedFactor - 1.0) * 0.25 + (Math.random() - 0.5) * 0.04).toFixed(2));
+      const flowM3h = Number((suppliedKl * 2.87).toFixed(1));
+
+      insertStmt.run('PUMP-01', 'WATER_SUPPLIED_KL', suppliedKl, 'kL', isoTimestamp);
+      insertStmt.run('PUMP-01', 'WATER_AUTHORIZED_KL', authorizedKl, 'kL', isoTimestamp);
+      insertStmt.run('VIL-A', 'DELIVERED_KL', deliveredAKl, 'kL', isoTimestamp);
+      insertStmt.run('VIL-B', 'DELIVERED_KL', deliveredBKl, 'kL', isoTimestamp);
+      insertStmt.run('VIL-C', 'DELIVERED_KL', deliveredCKl, 'kL', isoTimestamp);
+      insertStmt.run('PUMP-01', 'ENERGY_KWH', energyKwh, 'kWh', isoTimestamp);
+      insertStmt.run('SYSTEM', 'WATER_BALANCE_DIFF_PERCENT', diffPercent, '%', isoTimestamp);
+      insertStmt.run('PUMP-01', 'DISCHARGE_PRESSURE_BAR', pressureBar, 'bar', isoTimestamp);
+      insertStmt.run('PUMP-01', 'FLOW_RATE_M3H', flowM3h, 'm³/h', isoTimestamp);
+    }
+    db.exec('COMMIT;');
+    console.log('Seeded 30-day telemetry history successfully.');
+  } catch (err) {
+    db.exec('ROLLBACK;');
+    console.error('Failed to seed telemetry history:', err);
+  }
 }
 
 function seedData() {

@@ -6,27 +6,64 @@
  * 3. Resident: Blocked from operational & admin routes, restricted to village data
  */
 
-const BASE_URL = 'http://localhost:4000/api';
+import http from 'node:http';
+import { Readable } from 'node:stream';
+import { app } from './server.js';
+
+function dispatchInProcess(method, endpoint, body = null, token = null) {
+  return new Promise((resolve) => {
+    const socket = new Readable({ read() {} });
+    const req = new http.IncomingMessage(socket);
+    req.method = method;
+    req.url = `/api${endpoint}`;
+    req.headers = {
+      'content-type': 'application/json'
+    };
+    if (token) {
+      req.headers['authorization'] = `Bearer ${token}`;
+    }
+
+    let resData = '';
+    const res = new http.ServerResponse(req);
+    res.assignSocket(new (class FakeSocket extends Readable {
+      _read() {}
+      cork() {}
+      uncork() {}
+      write(chunk, enc, cb) { if (cb) cb(); return true; }
+      destroy() {}
+    })());
+
+    res.write = (chunk) => {
+      resData += chunk;
+      return true;
+    };
+
+    res.end = (chunk) => {
+      if (chunk) resData += chunk;
+      let parsed = resData;
+      try {
+        parsed = JSON.parse(resData);
+      } catch {}
+      resolve({ status: res.statusCode, data: parsed });
+    };
+
+    if (body) {
+      const bodyStr = typeof body === 'object' ? JSON.stringify(body) : String(body);
+      req.headers['content-length'] = Buffer.byteLength(bodyStr);
+      req.push(bodyStr);
+    }
+    req.push(null);
+
+    app(req, res);
+  });
+}
 
 async function postJSON(endpoint, data, token = null) {
-  const headers = { 'Content-Type': 'application/json' };
-  if (token) headers['Authorization'] = `Bearer ${token}`;
-  const res = await fetch(`${BASE_URL}${endpoint}`, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify(data)
-  });
-  return { status: res.status, data: await res.json() };
+  return dispatchInProcess('POST', endpoint, data, token);
 }
 
 async function getJSON(endpoint, token = null) {
-  const headers = {};
-  if (token) headers['Authorization'] = `Bearer ${token}`;
-  const res = await fetch(`${BASE_URL}${endpoint}`, {
-    method: 'GET',
-    headers
-  });
-  return { status: res.status, data: await res.json() };
+  return dispatchInProcess('GET', endpoint, null, token);
 }
 
 async function runRBACTests() {
@@ -127,7 +164,8 @@ async function runRBACTests() {
   console.log(`Summary: ${passed} passed, ${failed} failed.`);
   console.log('====================================================\n');
 
-  if (failed > 0) process.exit(1);
+  // Close server gracefully
+  process.exit(failed > 0 ? 1 : 0);
 }
 
 runRBACTests().catch(err => {

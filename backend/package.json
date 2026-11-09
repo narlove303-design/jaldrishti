@@ -5,7 +5,11 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "node --watch server.js"
+    "dev": "node --watch server.js",
+    "test:rbac": "node test_rbac.js",
+    "test:security": "node test_security.js",
+    "test:engineering": "node test_engineering.js",
+    "test": "node test_engineering.js && node test_security.js && node test_rbac.js"
   },
   "keywords": [],
   "author": "",

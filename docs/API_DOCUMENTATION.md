@@ -1,17 +1,22 @@
 # JalDrishti – REST & WebSocket API Documentation
 **Smart Multi-Village Water Intelligence & Management System**
-*Version 1.0.0*
+*Version 1.1.0 – Production-Hardened SCADA Specification*
 
 ---
 
 ## 1. Architecture & Protocol Overview
 - **Base URL**: `http://localhost:4000/api`
-- **Real-Time Telemetry Stream**: `ws://localhost:4000/ws/telemetry`
+- **Real-Time Telemetry Stream**: `ws://localhost:4000/ws/telemetry?token=<JWT>`
 - **Authentication**: Bearer Token in `Authorization: Bearer <JWT>` header
+- **CORS Whitelist**: Controlled via `ALLOWED_ORIGINS` environment variable
+- **Rate Limiting**: Sliding-window rate limiter per IP with headers:
+  - `X-RateLimit-Limit`: Maximum requests permitted in window
+  - `X-RateLimit-Remaining`: Requests remaining in current window
+  - `Retry-After`: Seconds to wait when rate limited (HTTP 429)
 - **Role Enforcement (RBAC)**:
   - `Administrator`: Full access to all villages, user directory, audit trails, and policy publishing.
   - `Operating Staff`: Supervisory monitoring, safe simulated equipment controls, maintenance work orders, alarms, and incident draft submissions.
-  - `Resident`: Strictly isolated to resident portal endpoints, village water schedules, notice boards, and complaint tracking. Any attempt to reach admin or operator routes returns `403 Forbidden` and logs a security violation.
+  - `Resident`: Strictly isolated to resident portal endpoints, village water schedules, notice boards, and complaint tracking. Any attempt to reach admin or operator routes returns `403 Forbidden` and logs a security audit violation.
 
 ---
 
@@ -19,6 +24,7 @@
 
 ### 2.1 User Login
 `POST /api/auth/login`
+- **Rate Limit**: 30 requests per 15 minutes per IP
 - **Body**:
   ```json
   {
@@ -43,31 +49,70 @@
 
 ### 2.2 Resident Registration (Step 1)
 `POST /api/auth/register`
+- **Rate Limit**: 15 requests per 10 minutes per IP
 - **Body**:
   ```json
   {
-    "name": "Suman Verma",
-    "email_or_mobile": "suman@demo.local",
-    "password": "Demo12345!",
-    "village": "Village B"
+    "name": "Harpreet Kaur",
+    "email_or_mobile": "harpreet@demo.local",
+    "password": "StrongPassword2026!",
+    "village": "Village A"
   }
   ```
 - **Response (200 OK)**:
   ```json
   {
-    "message": "Simulated OTP generated successfully.",
-    "contact": "suman@demo.local",
-    "simulatedOtp": "123456"
+    "message": "Cryptographically generated OTP dispatched for resident registration.",
+    "contact": "harpreet@demo.local",
+    "simulatedOtp": "834192",
+    "expiresInMinutes": 10
   }
   ```
 
-### 2.3 Simulated OTP Verification (Step 2)
+### 2.3 Cryptographic OTP Verification (Step 2)
 `POST /api/auth/otp/verify`
+- **Rate Limit**: Max 5 attempts per OTP code
 - **Body**:
   ```json
   {
-    "email_or_mobile": "suman@demo.local",
-    "otp": "123456"
+    "email_or_mobile": "harpreet@demo.local",
+    "otp": "834192"
+  }
+  ```
+- **Response (200 OK)**: Account activated and signed JWT token issued.
+
+### 2.4 Password Reset Request (Step 1)
+`POST /api/auth/forgot-password`
+- **Body**:
+  ```json
+  {
+    "email_or_mobile": "resident@demo.local"
+  }
+  ```
+- **Response (200 OK)**:
+  ```json
+  {
+    "message": "Password recovery OTP issued.",
+    "contact": "resident@demo.local",
+    "simulatedOtp": "592814",
+    "expiresInMinutes": 10
+  }
+  ```
+
+### 2.5 Password Reset Confirmation (Step 2)
+`POST /api/auth/reset-password`
+- **Body**:
+  ```json
+  {
+    "email_or_mobile": "resident@demo.local",
+    "otp": "592814",
+    "new_password": "NewSecurePassword2026!"
+  }
+  ```
+- **Response (200 OK)**:
+  ```json
+  {
+    "message": "Password reset successfully. You may now sign in with your new credentials."
   }
   ```
 
@@ -77,7 +122,7 @@
 
 ### 3.1 Get Pump Telemetry
 `GET /api/pump`
-- **Allowed Roles**: `Administrator`, `Operating Staff` (Blocked for `Resident`)
+- **Allowed Roles**: `Administrator`, `Operating Staff` (Blocked for `Resident` with 403)
 - **Response (200 OK)**:
   ```json
   {
@@ -85,7 +130,7 @@
       "id": 1,
       "name": "Central Main Pump Station (P-01)",
       "status": "Running",
-      "voltage_v": 415.2,
+      "voltage_v": 415.0,
       "current_a": 23.4,
       "power_kw": 12.8,
       "motor_temp_c": 58.4,
@@ -107,35 +152,21 @@
 - **Body**:
   ```json
   {
-    "command": "START", // START | STOP | SET_FREQUENCY | RESET_INTERLOCKS
-    "frequency_hz": 48.0
+    "command": "START",
+    "frequency_hz": 48.5,
+    "confirmation_override": true
   }
   ```
-- **Response (200 OK)**:
-  ```json
-  {
-    "message": "SIMULATED: Main pump P-01 started successfully.",
-    "status": "Running",
-    "note": "Simulation mode active: No electrical relay or physical motor was engaged."
-  }
-  ```
+- **Allowed Commands**: `START`, `STOP`, `SET_FREQUENCY`, `RESET_INTERLOCKS`
 
 ---
 
-## 4. Multi-Village Distribution (`/api/villages`)
+## 4. AI Leakage Intelligence (`/api/leaks`)
 
-### 4.1 Village Comparison Dashboard
-`GET /api/villages/comparison`
-- **Allowed Roles**: `Administrator`, `Operating Staff`
-- **Response**: Returns comparative breakdown across Village A, Village B, and Village C, including per-household allocation ($L/\text{household}$), storage tank reserve hours, delivered vs authorized volume, and operational statuses.
-
----
-
-## 5. AI Leakage Intelligence (`/api/leaks`)
-
-### 5.1 Mass-Balance Anomaly Engine
+### 4.1 Get Leakage Alerts & Mass Balance
 `GET /api/leaks`
-- **Response**:
+- **Allowed Roles**: `Administrator`, `Operating Staff`
+- **Response (200 OK)**:
   ```json
   {
     "activeAlerts": [
@@ -143,12 +174,12 @@
         "id": 1,
         "leak_code": "LEAK-C01",
         "village": "Village C",
-        "suspected_location": "School Road, near Community Centre",
+        "suspected_location": "School Road, near Community Centre (Chainage 520m)",
+        "pipeline_id": "PIPE-C01",
         "estimated_loss_lph": 1260.0,
         "anomaly_score": 88.5,
         "severity": "Critical",
         "classification": "Suspected Leak",
-        "affected_households": 45,
         "status": "Active"
       }
     ],
@@ -156,100 +187,35 @@
       "pumpOutletFlowM3h": 84.0,
       "branchSumFlowM3h": 82.7,
       "instantaneousMismatchM3h": 1.3,
-      "instantaneousMismatchLph": 1300
+      "instantaneousMismatchLph": 1300,
+      "methodology": "Transparent Rule-Based Mass-Balance & Hydraulic Gradient Analysis"
     }
   }
   ```
 
-### 5.2 Update Investigation Status
-`PATCH /api/leaks/:id/status`
-- **Body**:
-  ```json
-  {
-    "status": "Under Investigation", // Active | Under Investigation | Repaired | False Positive
-    "notes": "Acoustic leak correlator deployed at chainage 520m."
-  }
-  ```
+---
+
+## 5. Water Balance & System Analytics (`/api/analytics`)
+
+### 5.1 IWA Water Balance Calculations
+`GET /api/analytics/water-balance?period=daily`
+- **Parameters**: `period` (`daily`, `weekly`, `monthly`)
+- **Allowed Roles**: `Administrator`, `Operating Staff`
+- **Computations**: Aggregated dynamically from actual historical SCADA rows in `telemetry_history`.
+
+### 5.2 Telemetry CSV Export
+`GET /api/analytics/export-csv?period=daily`
+- **Response**: RFC 4180 CSV attachment formatted for Excel and GIS import.
 
 ---
 
-## 6. Village Water Notice Board (`/api/notices`)
+## 6. Real-Time Telemetry WebSocket Stream
 
-### 6.1 Get Notices (Role-Filtered)
-`GET /api/notices`
-- When accessed by a `Resident`, automatically filters to notices targeting their registered village or `All`.
-
-### 6.2 Publish Public Notice
-`POST /api/notices`
-- `Administrator`: Published immediately to all village boards.
-- `Operating Staff`: Submitted as `Pending Approval` for administrator sign-off.
-- **Body**:
+- **URL**: `ws://localhost:4000/ws/telemetry?token=<JWT>`
+- **In-band Authentication**:
   ```json
-  {
-    "title": "Low Pressure Advisory due to Feeder Maintenance",
-    "target_villages": ["Village B", "Village C"],
-    "category": "Low water pressure",
-    "priority": "Important",
-    "description": "Pressure will be reduced between 2 PM and 4 PM.",
-    "expected_restoration": "Today 04:30 PM"
-  }
+  { "type": "AUTH", "token": "<JWT>" }
   ```
-
----
-
-## 7. Resident Complaints & Grievance Desk (`/api/complaints`)
-
-### 7.1 Register Complaint
-`POST /api/complaints`
-- **Body**:
-  ```json
-  {
-    "category": "Leakage",
-    "location": "House 42, School Road",
-    "description": "Water leaking through cobblestones.",
-    "resident_contact": "+91 98765 43210"
-  }
-  ```
-- **Response (201 Created)**:
-  ```json
-  {
-    "message": "Water complaint registered successfully.",
-    "complaintCode": "CMP-1043",
-    "status": "Open"
-  }
-  ```
-
-### 7.2 Track by Reference Code
-`GET /api/complaints/track/CMP-1042`
-- Returns step-by-step progress history:
-  `Received → Assigned to Technician → Field Inspection → Resolved`
-
----
-
-## 8. Real-Time WebSocket Telemetry (`/ws/telemetry`)
-- Connect: `ws://localhost:4000/ws/telemetry`
-- Server pushes updates every 3 seconds:
-  ```json
-  {
-    "type": "TELEMETRY_UPDATE",
-    "timestamp": "2026-11-08T15:00:00.000Z",
-    "pump": {
-      "status": "Running",
-      "flowRate": 84.1,
-      "pressure": 3.63,
-      "current": 23.4,
-      "power": 12.8,
-      "motorTemp": 58.5
-    },
-    "branches": {
-      "villageA": { "flow": 34.1, "pressure": 3.34 },
-      "villageB": { "flow": 26.9, "pressure": 2.58 },
-      "villageC": { "flow": 21.7, "pressure": 1.88 }
-    },
-    "tanks": {
-      "Village A": 74.0,
-      "Village B": 48.5,
-      "Village C": 61.2
-    }
-  }
-  ```
+- **Control Security Interlock**:
+  Any client sending `{ "type": "PUMP_CONTROL", "command": "START" }` must possess verified `Administrator` or `Operating Staff` role. Residents and unauthenticated clients receive `{ "type": "ERROR", "error": "Forbidden..." }` and a security event is recorded in the audit trail.
+- **Broadcast Payload**: Emits physical telemetry every 3 seconds including pump hydraulics, Darcy-Weisbach branch pressures, tank levels, and mass-balance anomaly severity.
